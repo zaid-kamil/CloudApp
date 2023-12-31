@@ -1,6 +1,7 @@
 package com.digi.cloudapp.ui.theme
 
 import androidx.lifecycle.ViewModel
+import com.digi.cloudapp.ChoreEvent
 import com.digi.cloudapp.data.Chores
 import com.google.firebase.firestore.ktx.firestore
 import com.google.firebase.ktx.Firebase
@@ -16,7 +17,7 @@ enum class UploadStatus {
     IDLE,
 }
 
-enum class DownloadStatus{
+enum class DownloadStatus {
     SUCCESS,
     FAILURE,
     IN_PROGRESS,
@@ -33,7 +34,6 @@ data class UiState(
 )
 
 class ChoreViewModel : ViewModel() {
-
     private val _uiState = MutableStateFlow(UiState())
     val uiState: StateFlow<UiState> get() = _uiState.asStateFlow()
     var db = Firebase.firestore
@@ -43,6 +43,7 @@ class ChoreViewModel : ViewModel() {
     }
 
     private fun saveData() {
+        _uiState.value.uploadStatus = UploadStatus.IN_PROGRESS
         if (_uiState.value.name.length < 4) {
             _uiState.value.errorMsg = "Chore Name should be 4 or more char"
             _uiState.value.uploadStatus = UploadStatus.FAILURE
@@ -56,15 +57,57 @@ class ChoreViewModel : ViewModel() {
             loadData()
         }.addOnFailureListener {
             _uiState.value.uploadStatus = UploadStatus.FAILURE
-            _uiState.value.errorMsg = it.message ?: ""
+            _uiState.value.errorMsg = it.message ?: "could not save data!"
         }
     }
 
     private fun loadData() {
-        db.collection("chores_list").get().addOnSuccessListener {
-
+        _uiState.value.downloadStatus = DownloadStatus.IN_PROGRESS
+        db.collection("chores_list").get().addOnSuccessListener { snapshot ->
+            if (snapshot.documents.size > 0) {
+                _uiState.update {
+                    it.copy(
+                        choresList = snapshot.toObjects(Chores::class.java),
+                        downloadStatus = DownloadStatus.SUCCESS,
+                        errorMsg = ""
+                    )
+                }
+            }else{
+                _uiState.update {
+                    it.copy(
+                        choresList = emptyList(),
+                        downloadStatus = DownloadStatus.SUCCESS,
+                        errorMsg = ""
+                    )
+                }
+            }
         }.addOnFailureListener {
-
+            _uiState.value.downloadStatus = DownloadStatus.FAILURE
+            _uiState.value.errorMsg = it.message ?: "some error occurred!"
         }
     }
+
+    private fun deleteData(chore: Chores) {
+        _uiState.value.downloadStatus = DownloadStatus.IN_PROGRESS
+        db.collection("chores_list").whereEqualTo("name", chore.name)
+            .get().addOnCompleteListener { query ->
+            if(query.result.documents.size> 0){
+                val id = query.result.documents[0].id
+                db.collection("chores_list").document(id).delete().addOnSuccessListener {
+                    _uiState.value.downloadStatus = DownloadStatus.SUCCESS
+                    loadData()
+                }
+            }
+        }
+    }
+
+    fun onEvent(event: ChoreEvent) {
+        when (event) {
+            is ChoreEvent.OnItemDelete -> deleteData(event.chore)
+            is ChoreEvent.OnNameEdit -> _uiState.update { it.copy(name = event.name) }
+            ChoreEvent.OnRefreshClicked -> loadData()
+            ChoreEvent.OnSaveClicked -> saveData()
+        }
+    }
+
 }
